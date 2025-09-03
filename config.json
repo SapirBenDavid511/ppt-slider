@@ -1,0 +1,12 @@
+{
+  "1": {
+    "title": "My first slider",
+    "sub-title": "I have free text to fill for my first slider",
+    "images": ["1.jpeg", "2.jpeg"]
+  },
+  "2": {
+    "title": "My second slider",
+    "sub-title": "I have free text to fill for my second slider",
+    "images": ["3.png"]
+  }
+}
