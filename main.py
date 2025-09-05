@@ -118,7 +118,7 @@ def resolve_image_paths(images: List[str], images_dir: Path) -> List[Path]:
 
 def place_images(slide, image_paths: List[Path],
                  canvas_left_in: float, canvas_top_in: float, canvas_w_in: float, canvas_h_in: float,
-                 slide_w_in: float, slide_h_in: float):
+                 slide_w_in: float, slide_h_in: float, layout: str = None):
     n = len(image_paths)
     # Allow up to 12 images per slide
     if n > 12:
@@ -127,7 +127,10 @@ def place_images(slide, image_paths: List[Path],
         n = 12
 
     # Pick rows/cols smartly
-    rows, cols = choose_grid(n, slide_w_in, slide_h_in, max_rows=4, max_cols=4)
+    if n == 2 and layout in ("horizontal", "vertical"):
+        rows, cols = (1, 2) if layout == "horizontal" else (2, 1)
+    else:
+        rows, cols = choose_grid(n, slide_w_in, slide_h_in, max_rows=4, max_cols=4)
 
     # Gutters scale according to density
     base_gutter = 0.25
@@ -222,7 +225,7 @@ def build_ppt(cfg: dict, images_dir: Path, output_path: Path, slide_w_in: float,
             run.font.color.rgb = RGBColor(180, 0, 0)
         else:
             place_images(slide, image_paths, canvas_left_in, canvas_top_in, canvas_w_in, canvas_h_in,
-                         slide_w_in, slide_h_in)
+                         slide_w_in, slide_h_in, layout=item.get("layout"))
 
     prs.save(str(output_path))
     print(f"[OK] Wrote {output_path}")

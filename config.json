@@ -2,7 +2,8 @@
   "1": {
     "title": "My first slider",
     "sub-title": "I have free text to fill for my first slider",
-    "images": ["1.jpeg", "2.jpeg"]
+    "images": ["1.jpeg", "2.jpeg"],
+    "layout": "vertical"
   },
   "2": {
     "title": "My second slider",
