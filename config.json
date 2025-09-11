@@ -9,5 +9,10 @@
     "title": "My second slider",
     "sub-title": "I have free text to fill for my second slider",
     "images": ["3.png"]
+  },
+  "3": {
+    "title": "Slide with PDF",
+    "sub-title": "Click the icon to open the PDF",
+    "pdf": "AnimalsK-2FreeSamples.pdf"
   }
 }

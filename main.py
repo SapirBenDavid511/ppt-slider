@@ -10,13 +10,49 @@ from pptx.util import Inches, Pt
 from pptx.enum.text import PP_PARAGRAPH_ALIGNMENT
 from pptx.dml.color import RGBColor
 from PIL import Image
+import os
+import urllib.parse
+
 
 SUPPORTED_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".gif"}
+
+
+def to_file_uri(p: Path) -> str:
+    """
+    Return a file:// URI that PowerPoint will accept.
+    Handles local absolute paths and UNC paths on Windows.
+    """
+    try:
+        rp = p.resolve()
+    except Exception:
+        rp = p
+
+    if os.name == "nt":
+        s = str(rp)
+
+        # UNC path? (\\server\share\path)
+        if s.startswith("\\\\"):
+            # file:////server/share/path (4 slashes after 'file:')
+            # Convert backslashes to forward slashes and percent-encode specials
+            unc = s.replace("\\", "/")
+            return "file:" + urllib.parse.urlsplit("////" + unc.lstrip("/")).geturl()
+
+        # Local drive (e.g., C:\path\to\file.pdf)
+        # as_uri() works fine for absolute paths with drive letters
+        if rp.is_absolute():
+            return rp.as_uri()
+
+        # Fallback: make absolute then as_uri
+        return rp.absolute().as_uri()
+    else:
+        # POSIX/macOS/Linux
+        return rp.absolute().as_uri()
 
 def parse_args():
     p = argparse.ArgumentParser(description="Build a PowerPoint from images and a config.json")
     p.add_argument("--config", type=str, default="config.json", help="Path to config.json")
     p.add_argument("--images-dir", type=str, default="images", help="Directory containing image files")
+    p.add_argument("--pdf-dir", type=str, default="pdf-files", help="Directory containing PDF files")
     p.add_argument("--output", type=str, default="slides.pptx", help="Output PPTX filename")
     p.add_argument("--width-in", type=float, default=13.333, help="Slide width in inches (16:9 ~ 13.333x7.5)")
     p.add_argument("--height-in", type=float, default=7.5, help="Slide height in inches")
@@ -104,6 +140,87 @@ def fit_rect_keep_aspect(img_w_px: int, img_h_px: int, cell_w_in: float, cell_h_
     scale = min(cell_w_in / w_in_native, cell_h_in / h_in_native)
     return (max(0.01, w_in_native * scale), max(0.01, h_in_native * scale))
 
+def resolve_pdf_paths(pdfs, pdf_dir: Path):
+    if not pdfs:
+        return []
+    if isinstance(pdfs, str):
+        pdfs = [pdfs]
+    out = []
+    for name in pdfs:
+        p = Path(name)
+        if not p.is_absolute():
+            p = pdf_dir / name
+        if p.exists() and p.suffix.lower() == ".pdf":
+            out.append(p)
+        else:
+            print(f"[WARN] Missing/unsupported pdf: {p}")
+    return out
+
+def place_pdf_icons(slide, pdf_paths, canvas_left_in, canvas_top_in, canvas_w_in, canvas_h_in):
+    from pptx.util import Inches, Pt
+    from pptx.enum.text import PP_PARAGRAPH_ALIGNMENT
+
+    max_per_col = max(8, int(canvas_h_in // 0.5))
+    col = 0
+    row_in_col = 0
+    icon_w_in = 0.5
+    icon_h_in = 0.5
+    gap_in = 0.18
+    label_w_in = max(2.5, canvas_w_in/2.5)
+
+    for idx, p in enumerate(pdf_paths):
+        if row_in_col >= max_per_col:
+            col += 1
+            row_in_col = 0
+        x = canvas_left_in + col * (icon_w_in + label_w_in + 1.0)
+        y = canvas_top_in + row_in_col * (icon_h_in + gap_in)
+
+        # Build BOTH a file:// URI and a raw absolute path (Windows UNC/drive friendly)
+        try:
+            abs_path = str(p.resolve())
+        except Exception:
+            abs_path = str(p)
+        file_uri = to_file_uri(Path(abs_path))
+
+        # --- ICON (rectangle) ---
+        icon = slide.shapes.add_shape(1, Inches(x), Inches(y), Inches(icon_w_in), Inches(icon_h_in))
+        tf = icon.text_frame
+        tf.clear()
+        para = tf.paragraphs[0]
+        run_icon = para.add_run()
+        run_icon.text = "PDF"
+        run_icon.font.size = Pt(12)
+        para.alignment = PP_PARAGRAPH_ALIGNMENT.CENTER
+
+        # Apply hyperlink to the ICON using RAW PATH (works well on many Windows setups)
+        icon.click_action.hyperlink.address = abs_path
+        icon.click_action.hyperlink.screen_tip = abs_path
+
+        # --- LABEL (filename) ---
+        lbl = slide.shapes.add_textbox(Inches(x + icon_w_in + 0.15), Inches(y - 0.02),
+                                       Inches(label_w_in), Inches(icon_h_in + 0.04))
+        ltf = lbl.text_frame
+        ltf.clear()
+        lp = ltf.paragraphs[0]
+        run_lbl = lp.add_run()
+        run_lbl.text = p.name
+        run_lbl.font.size = Pt(14)
+        lp.alignment = PP_PARAGRAPH_ALIGNMENT.LEFT
+
+        # Apply hyperlink to the LABEL RUN as a FILE URI (works well cross-platform)
+        # (Link the run itself, not just the textbox shape)
+        run_lbl.hyperlink.address = file_uri
+
+        # Also put the same file URI on the label shape (belt & suspenders)
+        lbl.click_action.hyperlink.address = file_uri
+        lbl.click_action.hyperlink.screen_tip = abs_path  # shows readable path on hover
+
+        # Debug so you can see exactly what was written
+        print("[LINK-ICON-RAW ]", abs_path)
+        print("[LINK-LABEL-URI]", file_uri)
+
+        row_in_col += 1
+
 def resolve_image_paths(images: List[str], images_dir: Path) -> List[Path]:
     out = []
     for name in images:
@@ -182,7 +299,7 @@ def place_images(slide, image_paths: List[Path],
             slide.shapes.add_picture(str(p), Inches(offset_left_in), Inches(offset_top_in),
                                      width=Inches(w_in), height=Inches(h_in))
 
-def build_ppt(cfg: dict, images_dir: Path, output_path: Path, slide_w_in: float, slide_h_in: float):
+def build_ppt(cfg: dict, images_dir: Path, pdf_dir: Path, output_path: Path, slide_w_in: float, slide_h_in: float):
     prs = Presentation()
     prs.slide_width = Inches(slide_w_in)
     prs.slide_height = Inches(slide_h_in)
@@ -196,12 +313,13 @@ def build_ppt(cfg: dict, images_dir: Path, output_path: Path, slide_w_in: float,
         title = item.get("title", "")
         subtitle = item.get("sub-title", "") or item.get("subtitle", "")
         images_list = item.get("images", []) or []
+        pdf_field = item.get("pdf", [])
 
         slide = prs.slides.add_slide(blank_layout)
         used_top_in = add_title_and_subtitle(slide, title, subtitle, slide_w_in)
 
         # Compute canvas for images; reduce title block if there are many images
-        count = len(images_list)
+        count = max(len(images_list), len(pdf_field) if isinstance(pdf_field, list) else (1 if pdf_field else 0))
         extra_top_cut = 0.0
         if count >= 8:
             extra_top_cut = 0.2
@@ -213,19 +331,23 @@ def build_ppt(cfg: dict, images_dir: Path, output_path: Path, slide_w_in: float,
         canvas_w_in = slide_w_in - 2*side_margin_in
         canvas_h_in = slide_h_in - canvas_top_in - bottom_margin_in
 
-        image_paths = resolve_image_paths(images_list, images_dir)
-        if not image_paths:
-            tb = slide.shapes.add_textbox(Inches(canvas_left_in), Inches(canvas_top_in),
-                                          Inches(canvas_w_in), Inches(0.6))
-            tf = tb.text_frame
-            p = tf.paragraphs[0]
-            run = p.add_run()
-            run.text = "No images found for this slide."
-            run.font.size = Pt(16)
-            run.font.color.rgb = RGBColor(180, 0, 0)
+        pdf_paths = resolve_pdf_paths(pdf_field, pdf_dir)
+        if pdf_paths:
+            place_pdf_icons(slide, pdf_paths, canvas_left_in, canvas_top_in, canvas_w_in, canvas_h_in)
         else:
-            place_images(slide, image_paths, canvas_left_in, canvas_top_in, canvas_w_in, canvas_h_in,
-                         slide_w_in, slide_h_in, layout=item.get("layout"))
+            image_paths = resolve_image_paths(images_list, images_dir)        
+            if not image_paths:
+                tb = slide.shapes.add_textbox(Inches(canvas_left_in), Inches(canvas_top_in),
+                                            Inches(canvas_w_in), Inches(0.6))
+                tf = tb.text_frame
+                p = tf.paragraphs[0]
+                run = p.add_run()
+                run.text = "No images found for this slide."
+                run.font.size = Pt(16)
+                run.font.color.rgb = RGBColor(180, 0, 0)
+            else:
+                place_images(slide, image_paths, canvas_left_in, canvas_top_in, canvas_w_in, canvas_h_in,
+                            slide_w_in, slide_h_in, layout=item.get("layout"))
 
     prs.save(str(output_path))
     print(f"[OK] Wrote {output_path}")
@@ -233,7 +355,7 @@ def build_ppt(cfg: dict, images_dir: Path, output_path: Path, slide_w_in: float,
 def main():
     args = parse_args()
     cfg = load_config(Path(args.config))
-    build_ppt(cfg, Path(args.images_dir), Path(args.output), args.width_in, args.height_in)
+    build_ppt(cfg, Path(args.images_dir), Path(args.pdf_dir), Path(args.output), args.width_in, args.height_in)
 
 if __name__ == "__main__":
     main()
