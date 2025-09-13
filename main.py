@@ -238,21 +238,23 @@ def place_images(slide, image_paths: List[Path],
                  slide_w_in: float, slide_h_in: float, layout: str = None):
     n = len(image_paths)
     # Allow up to 12 images per slide
-    if n > 12:
-        print(f"[INFO] More than 12 images provided ({n}); only the first 12 will be placed on this slide.")
-        image_paths = image_paths[:12]
-        n = 12
+    # if n > 12:
+    #     print(f"[INFO] More than 12 images provided ({n}); only the first 12 will be placed on this slide.")
+    #     image_paths = image_paths[:12]
+    #     n = 12
 
     # Pick rows/cols smartly
     if n == 2 and layout in ("horizontal", "vertical"):
         rows, cols = (1, 2) if layout == "horizontal" else (2, 1)
     else:
-        rows, cols = choose_grid(n, slide_w_in, slide_h_in, max_rows=4, max_cols=4)
+        rows, cols = choose_grid(n, slide_w_in, slide_h_in, max_rows=5, max_cols=5)
 
-    # Gutters scale according to density
+    # Gutters scale according to density; use smaller base when the slide is dense
     base_gutter = 0.25
+    if n >= 13:
+        base_gutter = 0.16  # slightly tighter for many images
     density = n / (rows*cols)
-    gutter_in = max(0.12, base_gutter * (0.9 if density < 0.75 else 1.05))
+    gutter_in = max(0.08, base_gutter * (0.9 if density < 0.75 else 1.05))
 
     # Outer padding
     outer_pad_w = 0.0
@@ -325,6 +327,8 @@ def build_ppt(cfg: dict, images_dir: Path, pdf_dir: Path, output_path: Path, sli
             extra_top_cut = 0.2
         if count >= 10:
             extra_top_cut = 0.35
+        if count >= 14:
+            extra_top_cut = 0.5
 
         canvas_left_in = side_margin_in
         canvas_top_in = max(used_top_in + 0.15 - extra_top_cut, 0.6)
